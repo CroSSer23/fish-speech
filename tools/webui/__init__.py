@@ -134,6 +134,8 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                         visible=True,
                     )
                 with gr.Row():
+                    progress = gr.HTML(value="", visible=True)
+                with gr.Row():
                     audio = gr.Audio(
                         label=i18n("Generated Audio"),
                         type="numpy",
@@ -173,7 +175,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                 seed,
                 use_memory_cache,
             ],
-            [audio, error],
+            [audio, error, progress],
             concurrency_limit=1,
         )
 

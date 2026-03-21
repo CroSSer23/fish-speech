@@ -4,6 +4,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
+import gradio as gr
 import numpy as np
 import soundfile as sf
 
@@ -56,14 +57,18 @@ def _make_request(
 
 
 def _run_inference(req: ServeTTSRequest, engine):
-    """Run inference and return (sample_rate, data) or raise."""
+    """Yields (segment_count, audio_or_None): None until final, then the audio."""
+    segment_count = 0
     for result in engine.inference(req):
         match result.code:
+            case "segment":
+                segment_count += 1
+                yield segment_count, None
             case "final":
-                return result.audio
+                yield segment_count, result.audio
+                return
             case "error":
                 raise RuntimeError(result.error)
-    return None
 
 
 def inference_wrapper(
@@ -97,22 +102,37 @@ def inference_wrapper(
     )
 
     if mode == "Line-by-line":
-        return _inference_linewise(text, engine, **common)
+        yield from _inference_linewise(text, engine, **common)
     else:
-        return _inference_normal(text, engine, **common)
+        yield from _inference_normal(text, engine, **common)
 
 
 # ── Normal mode ───────────────────────────────────────────────────────────────
 
 def _inference_normal(text, engine, **common):
+    chunk_length = common.get("chunk_length", 300)
+    estimated = max(1, len(text) // max(chunk_length, 50)) if chunk_length > 0 else 1
+
     try:
         req = _make_request(text=text, **common)
-        audio = _run_inference(req, engine)
+        audio = None
+        segment_count = 0
+
+        for seg_count, result_audio in _run_inference(req, engine):
+            segment_count = seg_count
+            if result_audio is not None:
+                audio = result_audio
+            else:
+                pct = min(90, int(seg_count / estimated * 100))
+                yield gr.update(), gr.update(), _progress_html(seg_count, estimated, pct)
+
     except RuntimeError as e:
-        return None, build_html_error_message(i18n(e))
+        yield None, build_html_error_message(i18n(e)), ""
+        return
 
     if audio is None:
-        return None, i18n("No audio generated")
+        yield None, i18n("No audio generated"), ""
+        return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -122,7 +142,7 @@ def _inference_normal(text, engine, **common):
 
     sample_rate, data = audio
     data_i16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
-    return (sample_rate, data_i16), None
+    yield (sample_rate, data_i16), None, _done_html(segment_count)
 
 
 # ── Line-by-line mode ─────────────────────────────────────────────────────────
@@ -130,7 +150,8 @@ def _inference_normal(text, engine, **common):
 def _inference_linewise(text, engine, **common):
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
-        return None, build_html_error_message(Exception("No lines to process"))
+        yield None, build_html_error_message(Exception("No lines to process")), ""
+        return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_dir = OUTPUT_DIR / timestamp
@@ -138,15 +159,27 @@ def _inference_linewise(text, engine, **common):
 
     last_audio = None
     errors = []
+    total_segments = 0
 
     for idx, line in enumerate(lines, start=1):
         print(f"[line-by-line] {idx}/{len(lines)}: {line[:60]}...")
+        yield gr.update(), gr.update(), _line_progress_html(idx - 1, len(lines), total_segments)
+
+        line_segments = 0
         try:
             req = _make_request(text=line, **common)
-            audio = _run_inference(req, engine)
+            audio = None
+            for seg_count, result_audio in _run_inference(req, engine):
+                line_segments = seg_count
+                if result_audio is not None:
+                    audio = result_audio
+                else:
+                    yield gr.update(), gr.update(), _line_progress_html(idx, len(lines), total_segments + seg_count)
         except RuntimeError as e:
             errors.append(f"Line {idx}: {e}")
             continue
+
+        total_segments += line_segments
 
         if audio is None:
             errors.append(f"Line {idx}: No audio generated")
@@ -160,13 +193,56 @@ def _inference_linewise(text, engine, **common):
 
     if last_audio is None:
         msg = "No audio generated. " + "; ".join(errors)
-        return None, build_html_error_message(Exception(msg))
+        yield None, build_html_error_message(Exception(msg)), ""
+        return
 
     error_html = build_html_error_message(Exception("; ".join(errors))) if errors else None
 
     sample_rate, data = last_audio
     data_i16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
-    return (sample_rate, data_i16), error_html
+    yield (sample_rate, data_i16), error_html, _done_html(total_segments)
+
+
+# ── Progress HTML helpers ─────────────────────────────────────────────────────
+
+def _progress_html(done: int, estimated: int, pct: int) -> str:
+    return f"""
+    <div style="padding:6px 0">
+      <div style="font-size:13px;color:#555;margin-bottom:5px">
+        🔄 Segment {done} / ~{estimated} estimated
+      </div>
+      <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden">
+        <div style="background:#4A90D9;height:100%;width:{pct}%;transition:width 0.3s ease;border-radius:6px"></div>
+      </div>
+    </div>
+    """
+
+
+def _line_progress_html(done: int, total: int, segments: int) -> str:
+    pct = int(done / total * 100) if total else 0
+    return f"""
+    <div style="padding:6px 0">
+      <div style="font-size:13px;color:#555;margin-bottom:5px">
+        🔄 Line {done}/{total} &nbsp;·&nbsp; {segments} segment{'s' if segments != 1 else ''} processed
+      </div>
+      <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden">
+        <div style="background:#4A90D9;height:100%;width:{pct}%;transition:width 0.3s ease;border-radius:6px"></div>
+      </div>
+    </div>
+    """
+
+
+def _done_html(total: int) -> str:
+    return f"""
+    <div style="padding:6px 0">
+      <div style="font-size:13px;color:#2e7d32;margin-bottom:5px">
+        ✅ Done &nbsp;·&nbsp; {total} segment{'s' if total != 1 else ''}
+      </div>
+      <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden">
+        <div style="background:#4CAF50;height:100%;width:100%;border-radius:6px"></div>
+      </div>
+    </div>
+    """
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
