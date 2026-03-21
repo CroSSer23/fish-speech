@@ -1,5 +1,8 @@
 import gc
 import queue
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Generator
 
 import numpy as np
@@ -81,63 +84,81 @@ class TTSInferenceEngine(ReferenceLoader, VQManager):
                 error=None,
             )
 
-        segments = []
+        # Stream segments to disk to avoid RAM/VRAM buildup during long generations
+        tmp_dir = Path(tempfile.mkdtemp(prefix="fish_speech_seg_"))
+        segment_count = 0
+        had_error = False
 
-        while True:
-            # Get the response from the LLAMA model
-            wrapped_result: WrappedGenerateResponse = response_queue.get()
-            if wrapped_result.status == "error":
+        try:
+            while True:
+                # Get the response from the LLAMA model
+                wrapped_result: WrappedGenerateResponse = response_queue.get()
+                if wrapped_result.status == "error":
+                    had_error = True
+                    yield InferenceResult(
+                        code="error",
+                        audio=None,
+                        error=(
+                            wrapped_result.response
+                            if isinstance(wrapped_result.response, Exception)
+                            else Exception("Unknown error")
+                        ),
+                    )
+                    break
+
+                # Check the response type
+                if not isinstance(wrapped_result.response, GenerateResponse):
+                    raise TypeError(
+                        "Expected GenerateResponse, got {type(wrapped_result.response).__name__}"
+                    )
+
+                result: GenerateResponse = wrapped_result.response
+                if result.action != "next":
+                    segment = self.get_audio_segment(result)
+
+                    if req.streaming:  # Used only by the API server
+                        yield InferenceResult(
+                            code="segment",
+                            audio=(sample_rate, segment),
+                            error=None,
+                        )
+
+                    # Write segment to disk immediately, free CPU memory
+                    np.save(str(tmp_dir / f"{segment_count:06d}.npy"), segment)
+                    segment_count += 1
+                    del segment
+                else:
+                    break
+
+        finally:
+            # Always clean up GPU memory once after all segments are decoded
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        if had_error or segment_count == 0:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not had_error:
                 yield InferenceResult(
                     code="error",
                     audio=None,
-                    error=(
-                        wrapped_result.response
-                        if isinstance(wrapped_result.response, Exception)
-                        else Exception("Unknown error")
-                    ),
+                    error=RuntimeError("No audio generated, please check the input text."),
                 )
-                break
-
-            # Check the response type
-            if not isinstance(wrapped_result.response, GenerateResponse):
-                raise TypeError(
-                    "Expected GenerateResponse, got {type(wrapped_result.response).__name__}"
-                )
-
-            result: GenerateResponse = wrapped_result.response
-            if result.action != "next":
-                segment = self.get_audio_segment(result)
-
-                if req.streaming:  # Used only by the API server
-                    yield InferenceResult(
-                        code="segment",
-                        audio=(sample_rate, segment),
-                        error=None,
-                    )
-                segments.append(segment)
-            else:
-                break
-
-        # Clean up the memory
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gc.collect()
-
-        # Edge case: no audio generated
-        if len(segments) == 0:
-            yield InferenceResult(
-                code="error",
-                audio=None,
-                error=RuntimeError("No audio generated, please check the input text."),
-            )
         else:
-            # Streaming or not, return the final audio
-            audio = np.concatenate(segments, axis=0)
-            yield InferenceResult(
-                code="final",
-                audio=(sample_rate, audio),
-                error=None,
-            )
+            # Concatenate segments from disk, then clean up
+            try:
+                parts = []
+                for i in range(segment_count):
+                    parts.append(np.load(str(tmp_dir / f"{i:06d}.npy")))
+                audio = np.concatenate(parts, axis=0)
+                del parts
+                yield InferenceResult(
+                    code="final",
+                    audio=(sample_rate, audio),
+                    error=None,
+                )
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
         return None
 

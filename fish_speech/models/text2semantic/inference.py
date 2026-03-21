@@ -206,7 +206,7 @@ def decode_n_tokens(
     # [MODIFIED] Pre-fetch ID for efficiency loop
     im_end_id = model.tokenizer.get_token_id(IM_END_TOKEN)
 
-    for i in tqdm(range(num_new_tokens)):
+    for i in tqdm(iter(range(num_new_tokens))):
         with sdpa_kernel(SDPBackend.MATH):
             next_token = decode_one_token(
                 model=model,
@@ -482,6 +482,41 @@ def split_text_by_speaker(text: str) -> list[str]:
     return turns
 
 
+def split_text_by_sentences(text: str, max_bytes: int = 300) -> list[str]:
+    """
+    Split plain text into chunks at sentence boundaries, keeping each chunk
+    under max_bytes UTF-8 bytes. Falls back to splitting on newlines, then
+    on punctuation (. ! ?), grouping greedily.
+    """
+    # First split on paragraph breaks, then on sentence-ending punctuation
+    sentence_endings = re.compile(r"(?<=[.!?\n])\s+")
+    sentences = [s.strip() for s in sentence_endings.split(text) if s.strip()]
+    if not sentences:
+        sentences = [text]
+
+    batches: list[str] = []
+    current_parts: list[str] = []
+    current_bytes = 0
+
+    for sentence in sentences:
+        s_bytes = len(sentence.encode("utf-8"))
+        # If a single sentence already exceeds the limit, emit it alone
+        if s_bytes > max_bytes and not current_parts:
+            batches.append(sentence)
+            continue
+        if current_bytes + s_bytes > max_bytes and current_parts:
+            batches.append(" ".join(current_parts))
+            current_parts = []
+            current_bytes = 0
+        current_parts.append(sentence)
+        current_bytes += s_bytes
+
+    if current_parts:
+        batches.append(" ".join(current_parts))
+
+    return batches
+
+
 def group_turns_into_batches(
     turns: list[str], max_speakers: int = 3, max_bytes: int = 300
 ) -> list[str]:
@@ -584,7 +619,7 @@ def generate_long(
         # torch.save(all_codes, "debug_vq_codes.pt")
     else:
         system_parts = [
-            TextPart(text="convert the provided text to speech", cal_loss=False)
+            TextPart(text="convert the provided text to speech naturally and expressively, with appropriate emotions, varied intonation, and dynamic rhythm that matches the content", cal_loss=False)
         ]
 
     base_conversation.append(
@@ -603,6 +638,8 @@ def generate_long(
         batches = group_turns_into_batches(
             turns, max_speakers=5, max_bytes=chunk_length
         )
+    elif chunk_length > 0 and len(text.encode("utf-8")) > chunk_length:
+        batches = split_text_by_sentences(text, max_bytes=chunk_length)
     else:
         batches = [text]
 

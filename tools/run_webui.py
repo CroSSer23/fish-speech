@@ -1,4 +1,5 @@
 import os
+import warnings
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -17,6 +18,9 @@ from tools.webui.inference import get_inference_wrapper
 
 # Make einx happy
 os.environ["EINX_FILTER_TRACEBACK"] = "false"
+
+# Suppress torch.compile/Inductor informational warnings that don't affect functionality
+warnings.filterwarnings("ignore", message="Online softmax is disabled on the fly")
 
 
 def parse_args():
@@ -103,5 +107,5 @@ if __name__ == "__main__":
     # Get the inference function with the immutable arguments
     inference_fct = get_inference_wrapper(inference_engine)
 
-    app = build_app(inference_fct, args.theme)
-    app.launch()
+    app = build_app(inference_fct, inference_engine, args.theme)
+    app.launch(share=True)
