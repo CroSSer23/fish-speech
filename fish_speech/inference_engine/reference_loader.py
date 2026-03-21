@@ -1,4 +1,5 @@
 import io
+import shutil
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Literal, Tuple
@@ -31,11 +32,7 @@ class ReferenceLoader:
         self.encode_reference: Callable
 
         # Define the torchaudio backend
-        backends = torchaudio.list_audio_backends()
-        if "ffmpeg" in backends:
-            self.backend = "ffmpeg"
-        else:
-            self.backend = "soundfile"
+        self.backend = "ffmpeg" if shutil.which("ffmpeg") else "soundfile"
 
     def load_by_id(
         self,

@@ -3,8 +3,6 @@ import warnings
 from argparse import ArgumentParser
 from pathlib import Path
 
-warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
-warnings.filterwarnings("ignore", message=".*list_audio_backends.*deprecated.*")
 
 import gradio as gr
 import pyrootutils
