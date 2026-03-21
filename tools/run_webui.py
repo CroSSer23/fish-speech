@@ -3,6 +3,10 @@ import warnings
 from argparse import ArgumentParser
 from pathlib import Path
 
+warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*list_audio_backends.*deprecated.*")
+
+import gradio as gr
 import pyrootutils
 import torch
 from loguru import logger
@@ -108,4 +112,4 @@ if __name__ == "__main__":
     inference_fct = get_inference_wrapper(inference_engine)
 
     app = build_app(inference_fct, inference_engine, args.theme)
-    app.launch(share=True)
+    app.launch(share=True, theme=gr.themes.Base())
