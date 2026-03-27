@@ -1,4 +1,5 @@
 import html
+import zipfile
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -12,6 +13,29 @@ from fish_speech.i18n import i18n
 from fish_speech.utils.schema import ServeReferenceAudio, ServeTTSRequest
 
 OUTPUT_DIR = Path("outputs")
+
+FADE_MS = 80  # fade-in / fade-out duration in milliseconds
+
+
+def _apply_fades(data: np.ndarray, sample_rate: int, fade_ms: int = FADE_MS) -> np.ndarray:
+    """Apply a short linear fade-in and fade-out to a float32 audio array."""
+    n_fade = int(sample_rate * fade_ms / 1000)
+    if data.ndim == 1:
+        length = len(data)
+    else:
+        length = data.shape[0]
+    n_fade = min(n_fade, length // 4)  # never fade more than 25% of the clip
+    if n_fade <= 0:
+        return data
+    ramp = np.linspace(0.0, 1.0, n_fade, dtype=np.float32)
+    out = data.copy().astype(np.float32)
+    if out.ndim == 1:
+        out[:n_fade] *= ramp
+        out[-n_fade:] *= ramp[::-1]
+    else:
+        out[:n_fade] *= ramp[:, np.newaxis]
+        out[-n_fade:] *= ramp[::-1, np.newaxis]
+    return out
 
 
 def _auto_save(audio: tuple, filepath: Path) -> Path | None:
@@ -124,14 +148,14 @@ def _inference_normal(text, engine, **common):
                 audio = result_audio
             else:
                 pct = min(90, int(seg_count / estimated * 100))
-                yield gr.update(), gr.update(), _progress_html(seg_count, estimated, pct)
+                yield gr.update(), gr.update(), _progress_html(seg_count, estimated, pct), gr.update()
 
     except RuntimeError as e:
-        yield None, build_html_error_message(i18n(e)), ""
+        yield None, build_html_error_message(i18n(e)), "", None
         return
 
     if audio is None:
-        yield None, i18n("No audio generated"), ""
+        yield None, i18n("No audio generated"), "", None
         return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
@@ -142,7 +166,7 @@ def _inference_normal(text, engine, **common):
 
     sample_rate, data = audio
     data_i16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
-    yield (sample_rate, data_i16), None, _done_html(segment_count)
+    yield (sample_rate, data_i16), None, _done_html(segment_count), None
 
 
 # ── Line-by-line mode ─────────────────────────────────────────────────────────
@@ -150,20 +174,20 @@ def _inference_normal(text, engine, **common):
 def _inference_linewise(text, engine, **common):
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
-        yield None, build_html_error_message(Exception("No lines to process")), ""
+        yield None, build_html_error_message(Exception("No lines to process")), "", None
         return
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_dir = OUTPUT_DIR / timestamp
     batch_dir.mkdir(parents=True, exist_ok=True)
 
-    last_audio = None
+    saved_paths = []
     errors = []
     total_segments = 0
 
     for idx, line in enumerate(lines, start=1):
         print(f"[line-by-line] {idx}/{len(lines)}: {line[:60]}...")
-        yield gr.update(), gr.update(), _line_progress_html(idx - 1, len(lines), total_segments)
+        yield gr.update(), gr.update(), _line_progress_html(idx - 1, len(lines), total_segments), gr.update()
 
         line_segments = 0
         try:
@@ -174,7 +198,7 @@ def _inference_linewise(text, engine, **common):
                 if result_audio is not None:
                     audio = result_audio
                 else:
-                    yield gr.update(), gr.update(), _line_progress_html(idx, len(lines), total_segments + seg_count)
+                    yield gr.update(), gr.update(), _line_progress_html(idx, len(lines), total_segments + seg_count), gr.update()
         except RuntimeError as e:
             errors.append(f"Line {idx}: {e}")
             continue
@@ -185,22 +209,26 @@ def _inference_linewise(text, engine, **common):
             errors.append(f"Line {idx}: No audio generated")
             continue
 
-        saved = _auto_save(audio, batch_dir / f"{idx}.wav")
+        sample_rate, data = audio
+        data_faded = _apply_fades(data.astype(np.float32), sample_rate)
+        saved = _auto_save((sample_rate, data_faded), batch_dir / f"{idx}.wav")
         if saved:
             print(f"[auto-save] Saved: {saved}")
+            saved_paths.append(saved)
 
-        last_audio = audio
-
-    if last_audio is None:
+    if not saved_paths:
         msg = "No audio generated. " + "; ".join(errors)
-        yield None, build_html_error_message(Exception(msg)), ""
+        yield None, build_html_error_message(Exception(msg)), "", None
         return
 
-    error_html = build_html_error_message(Exception("; ".join(errors))) if errors else None
+    zip_path = batch_dir.parent / f"{timestamp}.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for p in saved_paths:
+            zf.write(p, p.name)
+    print(f"[line-by-line] ZIP saved: {zip_path}")
 
-    sample_rate, data = last_audio
-    data_i16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
-    yield (sample_rate, data_i16), error_html, _done_html(total_segments)
+    error_html = build_html_error_message(Exception("; ".join(errors))) if errors else None
+    yield None, error_html, _done_html(total_segments), str(zip_path)
 
 
 # ── Progress HTML helpers ─────────────────────────────────────────────────────

@@ -142,6 +142,12 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                         interactive=False,
                         visible=True,
                     )
+                with gr.Row():
+                    zip_file = gr.File(
+                        label=i18n("Download ZIP (Line-by-line)"),
+                        visible=True,
+                        interactive=False,
+                    )
 
                 with gr.Row():
                     mode = gr.Radio(
@@ -175,7 +181,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                 seed,
                 use_memory_cache,
             ],
-            [audio, error, progress],
+            [audio, error, progress, zip_file],
             concurrency_limit=1,
         )
 
