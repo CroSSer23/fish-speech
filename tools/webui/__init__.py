@@ -407,6 +407,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
             ],
             outputs=[audio, error, progress, zip_file],
             concurrency_limit=1,
+            api_name="generate",
         )
 
         stop_btn.click(fn=cancel_generation, cancels=[generate_event])
