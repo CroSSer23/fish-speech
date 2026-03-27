@@ -1,5 +1,4 @@
 import os
-import warnings
 from argparse import ArgumentParser
 from pathlib import Path
 
@@ -20,9 +19,6 @@ from tools.webui.inference import get_inference_wrapper
 
 # Make einx happy
 os.environ["EINX_FILTER_TRACEBACK"] = "false"
-
-# Suppress torch.compile/Inductor informational warnings that don't affect functionality
-warnings.filterwarnings("ignore", message="Online softmax is disabled on the fly")
 
 
 def parse_args():
