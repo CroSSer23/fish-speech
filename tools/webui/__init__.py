@@ -231,9 +231,6 @@ input[type=range]::-webkit-slider-thumb {
   font-size: 15px !important; font-weight: 700 !important; letter-spacing: 0.01em !important;
 }
 
-/* Footer — hide */
-footer { display: none !important; }
-
 /* Scrollbars */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: #080c16; }
