@@ -500,7 +500,7 @@ wave canvas { filter: hue-rotate(145deg) saturate(1.5) !important; }
 
 
 def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.Blocks:
-    with gr.Blocks(css=CUSTOM_CSS, title="Fish Speech") as app:
+    with gr.Blocks(title="Fish Speech") as app:
 
         # ── Header ──────────────────────────────────────────────────────────
         gr.HTML("""
@@ -531,7 +531,6 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                     label=i18n("Input Text"),
                     placeholder=TEXTBOX_PLACEHOLDER,
                     lines=12,
-                    show_copy_button=True,
                 )
 
                 # Settings tabs
