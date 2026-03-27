@@ -1,4 +1,5 @@
 import html
+import threading
 import zipfile
 from datetime import datetime
 from functools import partial
@@ -13,6 +14,13 @@ from fish_speech.i18n import i18n
 from fish_speech.utils.schema import ServeReferenceAudio, ServeTTSRequest
 
 OUTPUT_DIR = Path("outputs")
+
+_cancel_event = threading.Event()
+
+
+def cancel_generation():
+    """Called by the Stop button — signals all running inference loops to abort."""
+    _cancel_event.set()
 
 FADE_MS = 80  # fade-in / fade-out duration in milliseconds
 
@@ -111,6 +119,7 @@ def inference_wrapper(
     engine,
 ):
     """Wrapper for the inference function. Used in the Gradio interface."""
+    _cancel_event.clear()
 
     common = dict(
         reference_id=reference_id,
@@ -143,6 +152,9 @@ def _inference_normal(text, engine, **common):
         segment_count = 0
 
         for seg_count, result_audio in _run_inference(req, engine):
+            if _cancel_event.is_set():
+                yield None, None, _cancelled_html(), None
+                return
             segment_count = seg_count
             if result_audio is not None:
                 audio = result_audio
@@ -186,6 +198,8 @@ def _inference_linewise(text, engine, **common):
     total_segments = 0
 
     for idx, line in enumerate(lines, start=1):
+        if _cancel_event.is_set():
+            break
         print(f"[line-by-line] {idx}/{len(lines)}: {line[:60]}...")
         yield gr.update(), gr.update(), _line_progress_html(idx - 1, len(lines), total_segments), gr.update()
 
@@ -194,6 +208,8 @@ def _inference_linewise(text, engine, **common):
             req = _make_request(text=line, **common)
             audio = None
             for seg_count, result_audio in _run_inference(req, engine):
+                if _cancel_event.is_set():
+                    break
                 line_segments = seg_count
                 if result_audio is not None:
                     audio = result_audio
@@ -216,8 +232,10 @@ def _inference_linewise(text, engine, **common):
             print(f"[auto-save] Saved: {saved}")
             saved_paths.append(saved)
 
+    cancelled = _cancel_event.is_set()
+
     if not saved_paths:
-        msg = "No audio generated. " + "; ".join(errors)
+        msg = "Cancelled — no files saved." if cancelled else "No audio generated. " + "; ".join(errors)
         yield None, build_html_error_message(Exception(msg)), "", None
         return
 
@@ -228,7 +246,8 @@ def _inference_linewise(text, engine, **common):
     print(f"[line-by-line] ZIP saved: {zip_path}")
 
     error_html = build_html_error_message(Exception("; ".join(errors))) if errors else None
-    yield None, error_html, _done_html(total_segments), str(zip_path)
+    status_html = _cancelled_html(len(saved_paths)) if cancelled else _done_html(total_segments)
+    yield None, error_html, status_html, str(zip_path)
 
 
 # ── Progress HTML helpers ─────────────────────────────────────────────────────
@@ -255,6 +274,20 @@ def _line_progress_html(done: int, total: int, segments: int) -> str:
       </div>
       <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden">
         <div style="background:#4A90D9;height:100%;width:{pct}%;transition:width 0.3s ease;border-radius:6px"></div>
+      </div>
+    </div>
+    """
+
+
+def _cancelled_html(saved: int = 0) -> str:
+    note = f" &nbsp;·&nbsp; {saved} file{'s' if saved != 1 else ''} saved" if saved else ""
+    return f"""
+    <div style="padding:6px 0">
+      <div style="font-size:13px;color:#b26a00;margin-bottom:5px">
+        ⏹ Cancelled{note}
+      </div>
+      <div style="background:#e0e0e0;border-radius:6px;height:10px;overflow:hidden">
+        <div style="background:#f0a500;height:100%;width:100%;border-radius:6px"></div>
       </div>
     </div>
     """

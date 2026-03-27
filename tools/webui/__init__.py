@@ -3,6 +3,7 @@ from typing import Callable
 import gradio as gr
 
 from fish_speech.i18n import i18n
+from tools.webui.inference import cancel_generation
 from tools.webui.variables import HEADER_MD, TEXTBOX_PLACEHOLDER
 
 
@@ -32,8 +33,8 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                                 chunk_length = gr.Slider(
                                     label=i18n("Iterative Prompt Length, 0 means off"),
                                     minimum=100,
-                                    maximum=400,
-                                    value=300,
+                                    maximum=800,
+                                    value=600,
                                     step=8,
                                 )
 
@@ -69,7 +70,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                                     label="Temperature",
                                     minimum=0.1,
                                     maximum=1.0,
-                                    value=0.9,
+                                    value=0.75,
                                     step=0.01,
                                 )
                                 seed = gr.Number(
@@ -158,14 +159,19 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
                     )
 
                 with gr.Row():
-                    with gr.Column(scale=3):
-                        generate = gr.Button(
-                            value="\U0001f3a7 " + i18n("Generate"),
-                            variant="primary",
-                        )
+                    generate = gr.Button(
+                        value="\U0001f3a7 " + i18n("Generate"),
+                        variant="primary",
+                        scale=3,
+                    )
+                    stop_btn = gr.Button(
+                        value="⏹ " + i18n("Stop"),
+                        variant="stop",
+                        scale=1,
+                    )
 
         # Submit
-        generate.click(
+        generate_event = generate.click(
             inference_fct,
             [
                 text,
@@ -184,6 +190,9 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "light") -> gr.
             [audio, error, progress, zip_file],
             concurrency_limit=1,
         )
+
+        # Stop: signal Python loop + cancel Gradio stream
+        stop_btn.click(fn=cancel_generation, cancels=[generate_event])
 
         # Refresh voice dropdown
         def refresh_voices():
