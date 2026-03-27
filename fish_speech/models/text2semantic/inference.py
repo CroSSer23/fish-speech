@@ -385,11 +385,7 @@ def init_model(checkpoint_path, device, precision, compile=False):
         decode_one_token = torch.compile(
             decode_one_token,
             backend="inductor" if torch.cuda.is_available() else "aot_eager",
-            # reduce-overhead uses CUDA graphs: captures the graph once and replays it.
-            # Compiles ~10x faster than "default" (no per-op Triton kernel generation)
-            # and is optimal for autoregressive inference where the graph is identical
-            # every step.
-            mode="reduce-overhead" if torch.cuda.is_available() else None,
+            mode="default",
             fullgraph=True,
         )
 
