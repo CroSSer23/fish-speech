@@ -144,10 +144,6 @@ DARK_THEME = gr.themes.Base(
     checkbox_label_text_color="#94a3b8",
     checkbox_label_text_color_selected="#00e5a8",
 
-    # Tabs
-    button_secondary_background_fill_selected="rgba(0,229,168,0.1)",
-    button_secondary_text_color_selected="#00e5a8",
-
     # Errors
     error_background_fill="rgba(255,77,109,0.08)",
     error_border_color="rgba(255,77,109,0.2)",
