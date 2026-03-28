@@ -47,25 +47,30 @@ def _apply_fades(data: np.ndarray, sample_rate: int, fade_ms: int = FADE_MS) -> 
     return out
 
 
-def _crossfade_concat(segments: list, sample_rate: int, overlap_ms: int) -> np.ndarray:
-    """Concatenate audio segments with crossfade overlap between consecutive lines."""
+def _crossfade_concat(segments: list, sample_rate: int, overlap_ms: int, gap_ms: int) -> np.ndarray:
+    """Concatenate audio segments with optional silence gap + crossfade between lines."""
     if not segments:
         return np.array([], dtype=np.float32)
 
-    n_cf = int(sample_rate * overlap_ms / 1000)
+    n_cf  = int(sample_rate * overlap_ms / 1000)
+    n_gap = int(sample_rate * gap_ms / 1000)
     result = segments[0].astype(np.float32)
 
     for seg in segments[1:]:
         seg = seg.astype(np.float32)
 
-        if n_cf <= 0 or len(result) < n_cf or len(seg) < n_cf:
-            result = np.concatenate([result, seg])
-            continue
+        # Insert silence gap before the next segment
+        if n_gap > 0:
+            result = np.concatenate([result, np.zeros(n_gap, dtype=np.float32)])
 
-        fade_out = np.linspace(1.0, 0.0, n_cf, dtype=np.float32)
-        fade_in  = np.linspace(0.0, 1.0, n_cf, dtype=np.float32)
-        overlap  = result[-n_cf:] * fade_out + seg[:n_cf] * fade_in
-        result   = np.concatenate([result[:-n_cf], overlap, seg[n_cf:]])
+        # Crossfade the tail of (result + silence) into the head of seg
+        if n_cf > 0 and len(result) >= n_cf and len(seg) >= n_cf:
+            fade_out = np.linspace(1.0, 0.0, n_cf, dtype=np.float32)
+            fade_in  = np.linspace(0.0, 1.0, n_cf, dtype=np.float32)
+            overlap  = result[-n_cf:] * fade_out + seg[:n_cf] * fade_in
+            result   = np.concatenate([result[:-n_cf], overlap, seg[n_cf:]])
+        else:
+            result = np.concatenate([result, seg])
 
     return result
 
@@ -150,6 +155,7 @@ def inference_wrapper(
     use_memory_cache,
     overlap_ms,
     context_chars,
+    gap_ms,
     engine,
 ):
     """Wrapper for the inference function. Used in the Gradio interface."""
@@ -169,7 +175,7 @@ def inference_wrapper(
     )
 
     if mode == "Line-by-line":
-        yield from _inference_linewise(text, engine, overlap_ms=int(overlap_ms), context_chars=int(context_chars), **common)
+        yield from _inference_linewise(text, engine, overlap_ms=int(overlap_ms), context_chars=int(context_chars), gap_ms=int(gap_ms), **common)
     else:
         yield from _inference_normal(text, engine, **common)
 
@@ -217,7 +223,7 @@ def _inference_normal(text, engine, **common):
 
 # ── Line-by-line mode ─────────────────────────────────────────────────────────
 
-def _inference_linewise(text, engine, overlap_ms=80, context_chars=30, **common):
+def _inference_linewise(text, engine, overlap_ms=80, context_chars=30, gap_ms=150, **common):
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
         yield None, build_html_error_message(Exception("No lines to process")), "", None
@@ -305,7 +311,7 @@ def _inference_linewise(text, engine, overlap_ms=80, context_chars=30, **common)
     # Build combined audio with crossfade overlap between lines
     combined_audio = None
     if raw_segments and sample_rate_out is not None:
-        combined = _crossfade_concat(raw_segments, sample_rate_out, overlap_ms)
+        combined = _crossfade_concat(raw_segments, sample_rate_out, overlap_ms, gap_ms)
         combined_i16 = (np.clip(combined, -1.0, 1.0) * 32767).astype(np.int16)
         combined_audio = (sample_rate_out, combined_i16)
         combined_path = batch_dir.parent / f"{timestamp}_combined.wav"

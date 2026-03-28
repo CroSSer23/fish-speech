@@ -311,9 +311,15 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                         with gr.Row():
                             overlap_ms = gr.Slider(
                                 label=i18n("Audio Crossfade (ms)"),
-                                info="Line-by-line: overlap duration between consecutive lines in combined output · 0 = no crossfade",
+                                info="Line-by-line: crossfade duration at segment junctions in combined output · 0 = no crossfade",
                                 minimum=0, maximum=500, value=80, step=10,
                             )
+                            gap_ms = gr.Slider(
+                                label=i18n("Pause Between Lines (ms)"),
+                                info="Line-by-line: silence inserted between consecutive lines in combined output · 0 = no pause",
+                                minimum=0, maximum=500, value=150, step=10,
+                            )
+                        with gr.Row():
                             context_chars = gr.Slider(
                                 label=i18n("Prosody Context (chars)"),
                                 info="Line-by-line: pass last N chars of previous line as audio reference for natural intonation · 0 = off",
@@ -416,6 +422,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                 top_p, repetition_penalty, temperature, seed,
                 use_memory_cache,
                 overlap_ms,
+                gap_ms,
                 context_chars,
             ],
             outputs=[audio, error, progress, zip_file],
