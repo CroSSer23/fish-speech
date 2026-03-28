@@ -47,23 +47,17 @@ def _apply_fades(data: np.ndarray, sample_rate: int, fade_ms: int = FADE_MS) -> 
     return out
 
 
-def _crossfade_concat(segments: list, sample_rate: int, overlap_ms: int, gap_ms: int) -> np.ndarray:
-    """Concatenate audio segments with optional silence gap + crossfade between lines."""
+def _crossfade_concat(segments: list, sample_rate: int, overlap_ms: int) -> np.ndarray:
+    """Concatenate audio segments with crossfade overlap between consecutive lines."""
     if not segments:
         return np.array([], dtype=np.float32)
 
     n_cf  = int(sample_rate * overlap_ms / 1000)
-    n_gap = int(sample_rate * gap_ms / 1000)
     result = segments[0].astype(np.float32)
 
     for seg in segments[1:]:
         seg = seg.astype(np.float32)
 
-        # Insert silence gap before the next segment
-        if n_gap > 0:
-            result = np.concatenate([result, np.zeros(n_gap, dtype=np.float32)])
-
-        # Crossfade the tail of (result + silence) into the head of seg
         if n_cf > 0 and len(result) >= n_cf and len(seg) >= n_cf:
             fade_out = np.linspace(1.0, 0.0, n_cf, dtype=np.float32)
             fade_in  = np.linspace(0.0, 1.0, n_cf, dtype=np.float32)
@@ -288,6 +282,11 @@ def _inference_linewise(text, engine, overlap_ms=80, context_chars=30, gap_ms=15
 
         data_faded = _apply_fades(data_f32, sample_rate)
 
+        # Append silence gap so individual files have natural breathing room
+        if gap_ms > 0:
+            n_gap = int(sample_rate * gap_ms / 1000)
+            data_faded = np.concatenate([data_faded, np.zeros(n_gap, dtype=np.float32)])
+
         saved = _auto_save((sample_rate, data_faded), batch_dir / f"{idx}.wav")
         if saved:
             print(f"[auto-save] Saved: {saved}")
@@ -311,7 +310,7 @@ def _inference_linewise(text, engine, overlap_ms=80, context_chars=30, gap_ms=15
     # Build combined audio with crossfade overlap between lines
     combined_audio = None
     if raw_segments and sample_rate_out is not None:
-        combined = _crossfade_concat(raw_segments, sample_rate_out, overlap_ms, gap_ms)
+        combined = _crossfade_concat(raw_segments, sample_rate_out, overlap_ms)
         combined_i16 = (np.clip(combined, -1.0, 1.0) * 32767).astype(np.int16)
         combined_audio = (sample_rate_out, combined_i16)
         combined_path = batch_dir.parent / f"{timestamp}_combined.wav"

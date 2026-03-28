@@ -316,7 +316,7 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                             )
                             gap_ms = gr.Slider(
                                 label=i18n("Pause Between Lines (ms)"),
-                                info="Line-by-line: silence inserted between consecutive lines in combined output · 0 = no pause",
+                                info="Line-by-line: silence appended to the end of each individual WAV file · 0 = no pause",
                                 minimum=0, maximum=500, value=150, step=10,
                             )
                         with gr.Row():
