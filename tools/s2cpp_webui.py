@@ -321,9 +321,6 @@ def build_app(s2_bin: Path, model_path: Path, tokenizer_path: Path) -> gr.Blocks
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import pyrootutils
-    pyrootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
-
     parser = argparse.ArgumentParser(description="Fish Speech GGUF Web UI via s2.cpp")
     parser.add_argument("--s2cpp-dir", type=Path, default=Path("../s2cpp"),
                         help="Root directory of the compiled s2.cpp repo")

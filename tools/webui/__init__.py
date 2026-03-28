@@ -308,6 +308,17 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                                 info="0 = random",
                                 value=0,
                             )
+                        with gr.Row():
+                            overlap_ms = gr.Slider(
+                                label=i18n("Audio Crossfade (ms)"),
+                                info="Line-by-line: overlap duration between consecutive lines in combined output · 0 = no crossfade",
+                                minimum=0, maximum=500, value=80, step=10,
+                            )
+                            context_chars = gr.Slider(
+                                label=i18n("Prosody Context (chars)"),
+                                info="Line-by-line: pass last N chars of previous line as audio reference for natural intonation · 0 = off",
+                                minimum=0, maximum=120, value=30, step=5,
+                            )
 
                     # ── Reference voice ──────────────────────────────────────
                     with gr.Tab("🎙  Reference Voice"):
@@ -404,6 +415,8 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                 max_new_tokens, chunk_length,
                 top_p, repetition_penalty, temperature, seed,
                 use_memory_cache,
+                overlap_ms,
+                context_chars,
             ],
             outputs=[audio, error, progress, zip_file],
             concurrency_limit=1,
