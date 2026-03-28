@@ -348,6 +348,10 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
                             refresh_btn = gr.Button(
                                 "↻", scale=0, min_width=44, variant="secondary",
                             )
+                            delete_voice_btn = gr.Button(
+                                "🗑", scale=0, min_width=44, variant="stop",
+                            )
+                        delete_voice_status = gr.HTML()
                         reference_audio = gr.Audio(
                             label=i18n("Reference Audio"), type="filepath",
                         )
@@ -458,6 +462,29 @@ def build_app(inference_fct: Callable, engine=None, theme: str = "dark") -> gr.B
             save_voice,
             inputs=[reference_audio, reference_text, save_voice_name],
             outputs=[save_voice_status],
+        )
+
+        def delete_voice(voice_name):
+            if not voice_name or not voice_name.strip():
+                return "<div style='color:#ff4d6d'>Select a voice from the dropdown first.</div>", gr.Dropdown()
+            if engine is None:
+                return "<div style='color:#ff4d6d'>Engine not available.</div>", gr.Dropdown()
+            try:
+                engine.delete_reference(voice_name.strip())
+                ids = engine.list_reference_ids()
+                return (
+                    f"<div style='color:#00e5a8'>✓ Voice <b>{voice_name.strip()}</b> deleted.</div>",
+                    gr.Dropdown(choices=[""] + ids, value=""),
+                )
+            except FileNotFoundError:
+                return f"<div style='color:#ff4d6d'>Voice <b>{voice_name.strip()}</b> not found.</div>", gr.Dropdown()
+            except Exception as e:
+                return f"<div style='color:#ff4d6d'>Error: {e}</div>", gr.Dropdown()
+
+        delete_voice_btn.click(
+            delete_voice,
+            inputs=[reference_id],
+            outputs=[delete_voice_status, reference_id],
         )
 
     return app
