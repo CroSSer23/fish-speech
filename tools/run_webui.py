@@ -37,15 +37,56 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--half", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--fp8", action="store_true",
+                        help="Quantize LLM weights to float8 via torchao (for 12-20 GB VRAM)")
     parser.add_argument("--max-gradio-length", type=int, default=0)
     parser.add_argument("--theme", type=str, default="light")
 
     return parser.parse_args()
 
 
+def _patch_init_model_for_fp8():
+    """Monkey-patch init_model to load on CPU → quantize to FP8 → move to CUDA.
+
+    This avoids the ~20 GB VRAM peak that happens when loading BF16 weights
+    directly to GPU. With torchao float8_weight_only the model lands at ~10 GB.
+    """
+    import fish_speech.models.text2semantic.inference as _inf_module
+    _orig_init_model = _inf_module.init_model
+
+    def _fp8_init_model(checkpoint_path, device, precision, compile=False):
+        from torchao.quantization import float8_weight_only, quantize_
+
+        logger.info("FP8 mode: loading model to CPU first…")
+        model = _orig_init_model(checkpoint_path, device="cpu", precision=precision, compile=False)
+
+        logger.info("FP8 mode: quantizing Linear weights to float8…")
+        quantize_(model, float8_weight_only())
+
+        logger.info(f"FP8 mode: moving quantized model to {device}…")
+        model = model.to(device=device)
+
+        if compile:
+            from fish_speech.models.text2semantic.inference import (
+                decode_one_token_ar,
+                decode_one_token_naive,
+            )
+            model.decode_one_token = torch.compile(
+                decode_one_token_ar if hasattr(model, "fast_embeddings") else decode_one_token_naive,
+                mode="default",
+                fullgraph=True,
+            )
+        return model
+
+    _inf_module.init_model = _fp8_init_model
+
+
 if __name__ == "__main__":
     args = parse_args()
     args.precision = torch.half if args.half else torch.bfloat16
+
+    if args.fp8:
+        _patch_init_model_for_fp8()
 
     # Check if MPS or CUDA is available
     if torch.backends.mps.is_available():
